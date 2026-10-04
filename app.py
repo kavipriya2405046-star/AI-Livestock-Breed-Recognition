@@ -2,29 +2,40 @@
 # LIVESTOCK AI - GRADIO APP
 # ============================================================
 
-import subprocess
-subprocess.run(["pip", "install", "gradio", "timm", "-q"])
-
 # ============================================================
 # IMPORTS
 # ============================================================
-import os, torch, torch.nn as nn, timm, gradio as gr, traceback
+import os
+import torch
+import torch.nn as nn
+import timm
+import gradio as gr
+import traceback
 from PIL import Image
 from torchvision import transforms
-from google.colab import drive
 
 # ============================================================
-# MOUNT DRIVE
+# MODEL FOLDER
 # ============================================================
-drive.mount("/content/drive")
+FOLDER_PATH = "/app/models"
 
-FOLDER_PATH     = "/content/drive/MyDrive/sheep_folder_swintransformer"
-SHEEP_CLASSES   = ["Deccani", "Garole", "Madgyal", "Mandya", "Marwari", "Nellore", "Sawakni"]
-COW_CLASSES     = ["Gir", "Hallikar", "Hariana", "Kankrej", "Kangayam", "Murrah", "Ongole", "Rathi", "Sahiwal", "Tharparkar", "Holstein Friesian"]
-BUFFALO_CLASSES = sorted(["Chhattisgarhi", "Jaffarabadi", "banni", "bargur", "bhadwari",
-                           "chilika", "gojri", "kalahandi", "luit_(swamp)", "marathwadi",
-                           "mehsana", "murrah", "nagpuri", "nili-ravi", "pandharpuri",
-                           "surti", "toda"])
+SHEEP_CLASSES = [
+    "Deccani", "Garole", "Madgyal", "Mandya",
+    "Marwari", "Nellore", "Sawakni"
+]
+
+COW_CLASSES = [
+    "Gir", "Hallikar", "Hariana", "Kankrej", "Kangayam",
+    "Murrah", "Ongole", "Rathi", "Sahiwal", "Tharparkar",
+    "Holstein Friesian"
+]
+
+BUFFALO_CLASSES = sorted([
+    "Chhattisgarhi", "Jaffarabadi", "banni", "bargur", "bhadwari",
+    "chilika", "gojri", "kalahandi", "luit_(swamp)", "marathwadi",
+    "mehsana", "murrah", "nagpuri", "nili-ravi", "pandharpuri",
+    "surti", "toda"
+])
 
 # ============================================================
 # BREED DATA — BUFFALO
@@ -382,7 +393,7 @@ SHEEP_DATA = {
 }
 
 # ============================================================
-# BREED DATA — COW (same as before)
+# BREED DATA — COW
 # ============================================================
 COW_DATA = {
     "Gir": {
@@ -501,7 +512,7 @@ COW_DATA = {
 # MODEL ARCHITECTURES
 # ============================================================
 
-# ----- Sheep Model (original) -----
+# ----- Sheep Model -----
 class ChannelAttentionOld(nn.Module):
     def __init__(self, in_channels, reduction=16):
         super().__init__()
@@ -510,41 +521,59 @@ class ChannelAttentionOld(nn.Module):
             nn.ReLU(),
             nn.Conv2d(in_channels // reduction, in_channels, 1, bias=False)
         )
+
     def forward(self, x):
-        avg  = x.mean(dim=[2, 3], keepdim=True)
+        avg = x.mean(dim=[2, 3], keepdim=True)
         max_ = x.amax(dim=[2, 3], keepdim=True)
         return x * torch.sigmoid(self.fc(avg) + self.fc(max_))
+
 
 class SpatialAttentionOld(nn.Module):
     def __init__(self):
         super().__init__()
         self.conv = nn.Conv2d(2, 1, kernel_size=7, padding=3, bias=False)
+
     def forward(self, x):
-        avg  = x.mean(dim=1, keepdim=True)
+        avg = x.mean(dim=1, keepdim=True)
         max_ = x.amax(dim=1, keepdim=True)
-        return x * torch.sigmoid(self.conv(torch.cat([avg, max_], dim=1)))
+        return x * torch.sigmoid(
+            self.conv(torch.cat([avg, max_], dim=1))
+        )
+
 
 class CBAMOld(nn.Module):
     def __init__(self, in_channels):
         super().__init__()
         self.channel_att = ChannelAttentionOld(in_channels)
-        self.spatial_att  = SpatialAttentionOld()
+        self.spatial_att = SpatialAttentionOld()
+
     def forward(self, x):
         return self.spatial_att(self.channel_att(x))
+
 
 class SwinClassifier(nn.Module):
     def __init__(self, num_classes=7):
         super().__init__()
-        self.swin  = timm.create_model("swin_tiny_patch4_window7_224",
-                                       pretrained=False, num_classes=0, global_pool="")
+        self.swin = timm.create_model(
+            "swin_tiny_patch4_window7_224",
+            pretrained=False,
+            num_classes=0,
+            global_pool=""
+        )
         self.cbam1 = CBAMOld(96)
         self.cbam2 = CBAMOld(192)
         self.cbam3 = CBAMOld(384)
-        self.head  = nn.Sequential(
-            nn.AdaptiveAvgPool1d(1), nn.Flatten(), nn.LayerNorm(768),
-            nn.GELU(), nn.Linear(768, 256), nn.ReLU(),
-            nn.Dropout(0.3), nn.Linear(256, num_classes)
+        self.head = nn.Sequential(
+            nn.AdaptiveAvgPool1d(1),
+            nn.Flatten(),
+            nn.LayerNorm(768),
+            nn.GELU(),
+            nn.Linear(768, 256),
+            nn.ReLU(),
+            nn.Dropout(0.3),
+            nn.Linear(256, num_classes)
         )
+
     def forward(self, x):
         x = self.swin(x)
         if x.dim() == 4:
@@ -552,155 +581,302 @@ class SwinClassifier(nn.Module):
             x = x.reshape(B, H * W, C)
         x = x.transpose(1, 2)
         x = self.head[0](x).squeeze(-1)
-        x = self.head[2](x); x = self.head[3](x)
-        x = self.head[4](x); x = self.head[5](x)
-        x = self.head[6](x); x = self.head[7](x)
+        x = self.head[2](x)
+        x = self.head[3](x)
+        x = self.head[4](x)
+        x = self.head[5](x)
+        x = self.head[6](x)
+        x = self.head[7](x)
         return x
 
-# ----- Cow Model (original) -----
+
+# ----- Cow Model -----
 class CowCBAM(nn.Module):
     def __init__(self):
         super().__init__()
         self.mlp = nn.Sequential(
-            nn.Flatten(), nn.Linear(192, 12, bias=False), nn.ReLU(),
-            nn.Linear(12, 192, bias=False), nn.Sigmoid()
+            nn.Flatten(),
+            nn.Linear(192, 12, bias=False),
+            nn.ReLU(),
+            nn.Linear(12, 192, bias=False),
+            nn.Sigmoid()
         )
-        self.sp_conv = nn.Conv2d(2, 1, kernel_size=7, padding=3, bias=False)
+        self.sp_conv = nn.Conv2d(
+            2, 1, kernel_size=7, padding=3, bias=False
+        )
+
     def forward(self, x):
-        att    = self.mlp(x.mean(dim=[2, 3])).unsqueeze(-1).unsqueeze(-1)
-        x      = x * att
+        att = self.mlp(
+            x.mean(dim=[2, 3])
+        ).unsqueeze(-1).unsqueeze(-1)
+
+        x = x * att
+
         sp_avg = x.mean(dim=1, keepdim=True)
         sp_max = x.amax(dim=1, keepdim=True)
-        return x * torch.sigmoid(self.sp_conv(torch.cat([sp_avg, sp_max], dim=1)))
+
+        return x * torch.sigmoid(
+            self.sp_conv(torch.cat([sp_avg, sp_max], dim=1))
+        )
+
 
 class CowClassifier(nn.Module):
     def __init__(self, num_classes=11):
         super().__init__()
-        self.swin = timm.create_model("swin_tiny_patch4_window7_224",
-                                      pretrained=False, num_classes=0, global_pool="")
+        self.swin = timm.create_model(
+            "swin_tiny_patch4_window7_224",
+            pretrained=False,
+            num_classes=0,
+            global_pool=""
+        )
         self.cbam = CowCBAM()
         self.head = nn.Sequential(
-            nn.AdaptiveAvgPool1d(1), nn.LayerNorm(768), nn.Flatten(),
-            nn.Linear(768, 512), nn.ReLU(), nn.Dropout(0.3),
+            nn.AdaptiveAvgPool1d(1),
+            nn.LayerNorm(768),
+            nn.Flatten(),
+            nn.Linear(768, 512),
+            nn.ReLU(),
+            nn.Dropout(0.3),
             nn.Linear(512, num_classes)
         )
+
     def forward(self, x):
         x = self.swin(x)
+
         if x.dim() == 4:
             B, H, W, C = x.shape
             x = x.reshape(B, H * W, C)
+
         x = x.transpose(1, 2)
+
         x = self.head[0](x).squeeze(-1)
-        x = self.head[1](x); x = self.head[3](x)
-        x = self.head[4](x); x = self.head[5](x)
+        x = self.head[1](x)
+        x = self.head[3](x)
+        x = self.head[4](x)
+        x = self.head[5](x)
         x = self.head[6](x)
+
         return x
 
-# ----- NEW Buffalo Model (Swin-Small + Intermediate CBAM) -----
+
+# ----- Buffalo Model -----
 class ChannelAttentionNew(nn.Module):
     def __init__(self, in_channels, reduction=16):
         super().__init__()
         self.avg_pool = nn.AdaptiveAvgPool2d(1)
         self.max_pool = nn.AdaptiveMaxPool2d(1)
         self.fc = nn.Sequential(
-            nn.Linear(in_channels, in_channels // reduction, bias=False),
+            nn.Linear(
+                in_channels,
+                in_channels // reduction,
+                bias=False
+            ),
             nn.ReLU(),
-            nn.Linear(in_channels // reduction, in_channels, bias=False)
+            nn.Linear(
+                in_channels // reduction,
+                in_channels,
+                bias=False
+            )
         )
         self.sigmoid = nn.Sigmoid()
+
     def forward(self, x):
         b, c, _, _ = x.shape
-        avg  = self.fc(self.avg_pool(x).view(b, c))
-        max_ = self.fc(self.max_pool(x).view(b, c))
-        return x * self.sigmoid(avg + max_).view(b, c, 1, 1)
+
+        avg = self.fc(
+            self.avg_pool(x).view(b, c)
+        )
+
+        max_ = self.fc(
+            self.max_pool(x).view(b, c)
+        )
+
+        return x * self.sigmoid(
+            avg + max_
+        ).view(b, c, 1, 1)
+
 
 class SpatialAttentionNew(nn.Module):
     def __init__(self):
         super().__init__()
-        self.conv    = nn.Conv2d(2, 1, kernel_size=7, padding=3, bias=False)
+        self.conv = nn.Conv2d(
+            2, 1, kernel_size=7, padding=3, bias=False
+        )
         self.sigmoid = nn.Sigmoid()
+
     def forward(self, x):
-        avg     = torch.mean(x, dim=1, keepdim=True)
-        max_, _ = torch.max(x,  dim=1, keepdim=True)
-        return x * self.sigmoid(self.conv(torch.cat([avg, max_], dim=1)))
+        avg = torch.mean(
+            x, dim=1, keepdim=True
+        )
+
+        max_, _ = torch.max(
+            x, dim=1, keepdim=True
+        )
+
+        return x * self.sigmoid(
+            self.conv(
+                torch.cat([avg, max_], dim=1)
+            )
+        )
+
 
 class CBAMNew(nn.Module):
     def __init__(self, in_channels, reduction=16):
         super().__init__()
-        self.ca = ChannelAttentionNew(in_channels, reduction)
+        self.ca = ChannelAttentionNew(
+            in_channels,
+            reduction
+        )
         self.sa = SpatialAttentionNew()
+
     def forward(self, x):
         return self.sa(self.ca(x))
+
 
 class CBAMBridgeNew(nn.Module):
     def __init__(self, in_channels, reduction=16):
         super().__init__()
-        self.cbam = CBAMNew(in_channels, reduction)
+        self.cbam = CBAMNew(
+            in_channels,
+            reduction
+        )
+
     def forward(self, x):
         x = x.permute(0, 3, 1, 2)
         x = self.cbam(x)
         return x.permute(0, 2, 3, 1)
 
+
 class SwinCBAM(nn.Module):
     def __init__(self, num_classes=17, pretrained=False):
         super().__init__()
+
         self.swin = timm.create_model(
-            'swin_small_patch4_window7_224',  # ← Small (not tiny!)
+            "swin_small_patch4_window7_224",
             pretrained=False,
             num_classes=0,
-            global_pool=''
+            global_pool=""
         )
+
         self.cbam0 = CBAMBridgeNew(96)
         self.cbam1 = CBAMBridgeNew(192)
         self.cbam2 = CBAMBridgeNew(384)
         self.cbam3 = CBAMBridgeNew(768)
-        self.head  = nn.Sequential(
+
+        self.head = nn.Sequential(
             nn.LayerNorm(768),
-            nn.Linear(768, 512), nn.GELU(), nn.Dropout(0.4),
-            nn.Linear(512, 256), nn.GELU(), nn.Dropout(0.3),
+            nn.Linear(768, 512),
+            nn.GELU(),
+            nn.Dropout(0.4),
+            nn.Linear(512, 256),
+            nn.GELU(),
+            nn.Dropout(0.3),
             nn.Linear(256, num_classes)
         )
+
         self.use_cbam = True
 
     def forward(self, x):
         x = self.swin.patch_embed(x)
-        if hasattr(self.swin, 'absolute_pos_embed') \
-                and self.swin.absolute_pos_embed is not None:
+
+        if (
+            hasattr(self.swin, "absolute_pos_embed")
+            and self.swin.absolute_pos_embed is not None
+        ):
             x += self.swin.absolute_pos_embed
-        if hasattr(self.swin, 'pos_drop'):
+
+        if hasattr(self.swin, "pos_drop"):
             x = self.swin.pos_drop(x)
-        for layer, cbam in zip(self.swin.layers,
-                               [self.cbam0, self.cbam1,
-                                self.cbam2, self.cbam3]):
+
+        for layer, cbam in zip(
+            self.swin.layers,
+            [
+                self.cbam0,
+                self.cbam1,
+                self.cbam2,
+                self.cbam3
+            ]
+        ):
             x = layer(x)
-            if isinstance(x, tuple): x = x[0]
-            if self.use_cbam: x = cbam(x)
-        return self.head(x.mean(dim=[1, 2]))
+
+            if isinstance(x, tuple):
+                x = x[0]
+
+            if self.use_cbam:
+                x = cbam(x)
+
+        return self.head(
+            x.mean(dim=[1, 2])
+        )
+
 
 # ============================================================
 # LOAD ALL 3 MODELS
 # ============================================================
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print(f"🖥️  Device: {device}")
 
-sheep_model = SwinClassifier(num_classes=len(SHEEP_CLASSES))
-sheep_model.load_state_dict(torch.load(
-    os.path.join(FOLDER_PATH, "best_model.pth"), map_location=device))
+print(f"🖥️ Device: {device}")
+
+# Sheep
+sheep_model = SwinClassifier(
+    num_classes=len(SHEEP_CLASSES)
+)
+
+sheep_model.load_state_dict(
+    torch.load(
+        os.path.join(
+            FOLDER_PATH,
+            "best_model.pth"
+        ),
+        map_location=device
+    )
+)
+
 sheep_model = sheep_model.to(device).eval()
+
 print("✅ Sheep model loaded!")
 
-cow_model = CowClassifier(num_classes=len(COW_CLASSES))
-cow_model.load_state_dict(torch.load(
-    os.path.join(FOLDER_PATH, "best_cow_model.pth"), map_location=device))
+
+# Cow
+cow_model = CowClassifier(
+    num_classes=len(COW_CLASSES)
+)
+
+cow_model.load_state_dict(
+    torch.load(
+        os.path.join(
+            FOLDER_PATH,
+            "best_cow_model.pth"
+        ),
+        map_location=device
+    )
+)
+
 cow_model = cow_model.to(device).eval()
+
 print("✅ Cow model loaded!")
 
-# ✅ NEW Buffalo Model - 90.86%
-buffalo_model = SwinCBAM(num_classes=len(BUFFALO_CLASSES), pretrained=False)
-buffalo_model.load_state_dict(torch.load(
-    os.path.join(FOLDER_PATH, "buffalo_final_90.pth"), map_location=device))
+
+# Buffalo
+buffalo_model = SwinCBAM(
+    num_classes=len(BUFFALO_CLASSES),
+    pretrained=False
+)
+
+buffalo_model.load_state_dict(
+    torch.load(
+        os.path.join(
+            FOLDER_PATH,
+            "best_buffalo_finetuned (1).pth"
+        ),
+        map_location=device
+    )
+)
+
 buffalo_model = buffalo_model.to(device).eval()
-print("✅ Buffalo model loaded! (90.86% accuracy)")
+
+print("✅ Buffalo model loaded!")
+
 
 # ============================================================
 # IMAGE TRANSFORM
@@ -708,251 +884,539 @@ print("✅ Buffalo model loaded! (90.86% accuracy)")
 transform = transforms.Compose([
     transforms.Resize((224, 224)),
     transforms.ToTensor(),
-    transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+    transforms.Normalize(
+        [0.485, 0.456, 0.406],
+        [0.229, 0.224, 0.225]
+    )
 ])
 
+
 # ============================================================
-def build_html_table(top_breed, conf, animal_type, breed_info, scores):
-    # Blue for Buffalo, Purple for Cow, Blue-violet for Sheep
-    accent_map  = {"Buffalo": "#3b82f6", "Cow": "#8b5cf6", "Sheep": "#6366f1"}
-    accent2_map = {"Buffalo": "#1d4ed8", "Cow": "#6d28d9", "Sheep": "#4f46e5"}
-    accent      = accent_map.get(animal_type, "#3b82f6")
-    accent2     = accent2_map.get(animal_type, "#1d4ed8")
-    emoji_map   = {"Buffalo": "🐃", "Cow": "🐄", "Sheep": "🐑"}
-    em          = emoji_map.get(animal_type, "🐾")
+# BUILD HTML TABLE
+# ============================================================
+def build_html_table(
+    top_breed,
+    conf,
+    animal_type,
+    breed_info,
+    scores
+):
 
-    # Dark theme colors
-    bg_main  = "#0f1117"
-    bg_card  = "#1a1d2e"
-    bg_row1  = "#1e2235"
-    bg_row2  = "#1a1d2e"
+    accent_map = {
+        "Buffalo": "#3b82f6",
+        "Cow": "#8b5cf6",
+        "Sheep": "#6366f1"
+    }
+
+    accent2_map = {
+        "Buffalo": "#1d4ed8",
+        "Cow": "#6d28d9",
+        "Sheep": "#4f46e5"
+    }
+
+    accent = accent_map.get(
+        animal_type,
+        "#3b82f6"
+    )
+
+    accent2 = accent2_map.get(
+        animal_type,
+        "#1d4ed8"
+    )
+
+    emoji_map = {
+        "Buffalo": "🐃",
+        "Cow": "🐄",
+        "Sheep": "🐑"
+    }
+
+    em = emoji_map.get(
+        animal_type,
+        "🐾"
+    )
+
+    bg_main = "#0f1117"
+    bg_card = "#1a1d2e"
+    bg_row1 = "#1e2235"
+    bg_row2 = "#1a1d2e"
     txt_main = "#e2e8f0"
-    txt_sub  = "#94a3b8"
-    border   = "#2d3748"
+    txt_sub = "#94a3b8"
+    border = "#2d3748"
 
-    conf_color = "#22c55e" if conf >= 85 else "#f59e0b" if conf >= 60 else "#ef4444"
+    conf_color = (
+        "#22c55e"
+        if conf >= 85
+        else "#f59e0b"
+        if conf >= 60
+        else "#ef4444"
+    )
 
     html = f"""
-    <div style="font-family:'Segoe UI',Arial,sans-serif;padding:14px;
-                background:{bg_main};border-radius:14px;color:{txt_main};">
+    <div style="font-family:'Segoe UI',Arial,sans-serif;
+                padding:14px;background:{bg_main};
+                border-radius:14px;color:{txt_main};">
 
-        <!-- Header with gradient -->
-        <div style="background:linear-gradient(135deg,{accent2},{accent});
-                    padding:16px 20px;border-radius:12px;margin-bottom:14px;">
-            <h2 style="margin:0;font-size:22px;color:white;letter-spacing:0.5px;">
+        <div style="background:linear-gradient(135deg,
+                    {accent2},{accent});
+                    padding:16px 20px;border-radius:12px;
+                    margin-bottom:14px;">
+
+            <h2 style="margin:0;font-size:22px;color:white;
+                       letter-spacing:0.5px;">
                 {em} {top_breed.replace('_',' ').title()}
             </h2>
-            <p style="margin:4px 0 0 0;font-size:13px;color:rgba(255,255,255,0.8);">
+
+            <p style="margin:4px 0 0 0;font-size:13px;
+                      color:rgba(255,255,255,0.8);">
                 {animal_type} Breed · AI Classification Result
             </p>
         </div>
 
-        <!-- Confidence + Animal badges -->
-        <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap;">
-            <div style="background:{bg_card};border:1.5px solid {conf_color};
-                        border-radius:10px;padding:10px 18px;text-align:center;flex:1;min-width:80px;">
-                <div style="font-size:26px;font-weight:700;color:{conf_color};">{conf}%</div>
-                <div style="font-size:11px;color:{txt_sub};margin-top:2px;">Confidence</div>
+        <div style="display:flex;gap:10px;margin-bottom:14px;
+                    flex-wrap:wrap;">
+
+            <div style="background:{bg_card};
+                        border:1.5px solid {conf_color};
+                        border-radius:10px;padding:10px 18px;
+                        text-align:center;flex:1;min-width:80px;">
+
+                <div style="font-size:26px;font-weight:700;
+                            color:{conf_color};">
+                    {conf}%
+                </div>
+
+                <div style="font-size:11px;color:{txt_sub};
+                            margin-top:2px;">
+                    Confidence
+                </div>
             </div>
-            <div style="background:{bg_card};border:1.5px solid {accent};
-                        border-radius:10px;padding:10px 18px;text-align:center;flex:1;min-width:80px;">
-                <div style="font-size:18px;font-weight:700;color:{accent};">{animal_type}</div>
-                <div style="font-size:11px;color:{txt_sub};margin-top:2px;">Animal Type</div>
+
+            <div style="background:{bg_card};
+                        border:1.5px solid {accent};
+                        border-radius:10px;padding:10px 18px;
+                        text-align:center;flex:1;min-width:80px;">
+
+                <div style="font-size:18px;font-weight:700;
+                            color:{accent};">
+                    {animal_type}
+                </div>
+
+                <div style="font-size:11px;color:{txt_sub};
+                            margin-top:2px;">
+                    Animal Type
+                </div>
             </div>
         </div>
 
-        <!-- Breed Info Table -->
-        <div style="background:{bg_card};border-radius:10px;overflow:hidden;
+        <div style="background:{bg_card};
+                    border-radius:10px;overflow:hidden;
                     margin-bottom:12px;border:1px solid {border};">
-            <div style="background:linear-gradient(90deg,{accent2},{accent});
-                        color:white;padding:9px 14px;font-weight:600;font-size:13px;">
+
+            <div style="background:linear-gradient(90deg,
+                        {accent2},{accent});
+                        color:white;padding:9px 14px;
+                        font-weight:600;font-size:13px;">
                 📋 Breed Information
             </div>
-            <table style="width:100%;border-collapse:collapse;font-size:13px;">
+
+            <table style="width:100%;border-collapse:collapse;
+                          font-size:13px;">
     """
 
     icon_map = {
-        "Origin": "📍", "Coat Color": "🎨", "Body Weight": "⚖️",
-        "Horns": "🦌", "Primary Use": "🎯", "Milk Yield": "🥛",
-        "Milk Fat %": "💧", "Lactation Period": "📅",
-        "Adaptability": "🌿", "Temperament": "😊",
-        "Conservation Status": "🔰", "Economic Value": "💰",
-        "Type": "📌", "Avg Weight (Male)": "♂️",
-        "Avg Weight (Female)": "♀️", "Wool Quality": "🐑",
-        "Meat Quality": "🥩", "Milk Yield (L/day)": "🥛",
+        "Origin": "📍",
+        "Coat Color": "🎨",
+        "Body Weight": "⚖️",
+        "Horns": "🦌",
+        "Primary Use": "🎯",
+        "Milk Yield": "🥛",
+        "Milk Fat %": "💧",
+        "Lactation Period": "📅",
+        "Adaptability": "🌿",
+        "Temperament": "😊",
+        "Conservation Status": "🔰",
+        "Economic Value": "💰",
+        "Type": "📌",
+        "Avg Weight (Male)": "♂️",
+        "Avg Weight (Female)": "♀️",
+        "Wool Quality": "🐑",
+        "Meat Quality": "🥩",
+        "Milk Yield (L/day)": "🥛",
     }
 
-    skip_keys = {"Advantages", "Disadvantages", "Native to India", "Special Note"}
+    skip_keys = {
+        "Advantages",
+        "Disadvantages",
+        "Native to India",
+        "Special Note"
+    }
+
     row_idx = 0
 
     for key, val in breed_info.items():
+
         if key in skip_keys:
             continue
-        icon = icon_map.get(key, "•")
-        bg   = bg_row1 if row_idx % 2 == 0 else bg_row2
+
+        icon = icon_map.get(
+            key,
+            "•"
+        )
+
+        bg = (
+            bg_row1
+            if row_idx % 2 == 0
+            else bg_row2
+        )
+
         html += f"""
-            <tr style="background:{bg};border-bottom:1px solid {border};">
-                <td style="padding:8px 12px;font-weight:600;color:{txt_sub};
-                           width:40%;white-space:nowrap;font-size:12px;">
+            <tr style="background:{bg};
+                       border-bottom:1px solid {border};">
+
+                <td style="padding:8px 12px;
+                           font-weight:600;color:{txt_sub};
+                           width:40%;white-space:nowrap;
+                           font-size:12px;">
                     {icon} {key}
                 </td>
-                <td style="padding:8px 12px;color:{txt_main};font-size:13px;">{val}</td>
-            </tr>"""
+
+                <td style="padding:8px 12px;
+                           color:{txt_main};
+                           font-size:13px;">
+                    {val}
+                </td>
+
+            </tr>
+        """
+
         row_idx += 1
 
     html += "</table></div>"
 
     # Advantages
     if "Advantages" in breed_info:
+
         tags = "".join([
-            f'<span style="background:rgba(34,197,94,0.15);color:#4ade80;padding:4px 11px;'
-            f'border-radius:20px;margin:3px;display:inline-block;font-size:12px;'
-            f'font-weight:500;border:1px solid rgba(34,197,94,0.3);">'
+            f'<span style="background:rgba(34,197,94,0.15);'
+            f'color:#4ade80;padding:4px 11px;'
+            f'border-radius:20px;margin:3px;'
+            f'display:inline-block;font-size:12px;'
+            f'font-weight:500;'
+            f'border:1px solid rgba(34,197,94,0.3);">'
             f'✅ {t.strip()}</span>'
             for t in breed_info["Advantages"].split("|")
         ])
+
         html += f"""
-        <div style="background:{bg_card};border-radius:10px;padding:12px 14px;
-                    margin-bottom:10px;border:1px solid {border};">
-            <div style="font-weight:600;color:#4ade80;margin-bottom:8px;font-size:13px;">
+        <div style="background:{bg_card};
+                    border-radius:10px;padding:12px 14px;
+                    margin-bottom:10px;
+                    border:1px solid {border};">
+
+            <div style="font-weight:600;color:#4ade80;
+                        margin-bottom:8px;font-size:13px;">
                 ✅ Advantages
             </div>
+
             <div>{tags}</div>
-        </div>"""
+        </div>
+        """
 
     # Disadvantages
     if "Disadvantages" in breed_info:
+
         tags = "".join([
-            f'<span style="background:rgba(239,68,68,0.15);color:#f87171;padding:4px 11px;'
-            f'border-radius:20px;margin:3px;display:inline-block;font-size:12px;'
-            f'font-weight:500;border:1px solid rgba(239,68,68,0.3);">'
+            f'<span style="background:rgba(239,68,68,0.15);'
+            f'color:#f87171;padding:4px 11px;'
+            f'border-radius:20px;margin:3px;'
+            f'display:inline-block;font-size:12px;'
+            f'font-weight:500;'
+            f'border:1px solid rgba(239,68,68,0.3);">'
             f'❌ {t.strip()}</span>'
             for t in breed_info["Disadvantages"].split("|")
         ])
+
         html += f"""
-        <div style="background:{bg_card};border-radius:10px;padding:12px 14px;
-                    margin-bottom:10px;border:1px solid {border};">
-            <div style="font-weight:600;color:#f87171;margin-bottom:8px;font-size:13px;">
+        <div style="background:{bg_card};
+                    border-radius:10px;padding:12px 14px;
+                    margin-bottom:10px;
+                    border:1px solid {border};">
+
+            <div style="font-weight:600;color:#f87171;
+                        margin-bottom:8px;font-size:13px;">
                 ❌ Disadvantages
             </div>
+
             <div>{tags}</div>
-        </div>"""
+        </div>
+        """
 
     # Native to India
     if "Native to India" in breed_info:
-        val  = breed_info["Native to India"]
-        icon = "✅ Yes — Native Indian Breed" if val == "Yes" else "🌍 No — Exotic / Imported"
-        clr  = "#4ade80" if val == "Yes" else "#f87171"
-        bdr  = "rgba(74,222,128,0.4)" if val == "Yes" else "rgba(248,113,113,0.4)"
-        bgc  = "rgba(34,197,94,0.1)" if val == "Yes" else "rgba(239,68,68,0.1)"
+
+        val = breed_info["Native to India"]
+
+        icon = (
+            "✅ Yes — Native Indian Breed"
+            if val == "Yes"
+            else "🌍 No — Exotic / Imported"
+        )
+
+        clr = (
+            "#4ade80"
+            if val == "Yes"
+            else "#f87171"
+        )
+
+        bdr = (
+            "rgba(74,222,128,0.4)"
+            if val == "Yes"
+            else "rgba(248,113,113,0.4)"
+        )
+
+        bgc = (
+            "rgba(34,197,94,0.1)"
+            if val == "Yes"
+            else "rgba(239,68,68,0.1)"
+        )
+
         html += f"""
-        <div style="background:{bgc};border:1px solid {bdr};border-radius:10px;
-                    padding:10px 14px;margin-bottom:10px;font-weight:600;
+        <div style="background:{bgc};
+                    border:1px solid {bdr};
+                    border-radius:10px;padding:10px 14px;
+                    margin-bottom:10px;font-weight:600;
                     color:{clr};font-size:13px;">
             🇮🇳 {icon}
-        </div>"""
+        </div>
+        """
 
     # Special Note
     if "Special Note" in breed_info:
+
         html += f"""
-        <div style="background:rgba(251,191,36,0.08);border-left:4px solid #fbbf24;
-                    border-radius:0 10px 10px 0;padding:12px 14px;margin-bottom:14px;
+        <div style="background:rgba(251,191,36,0.08);
+                    border-left:4px solid #fbbf24;
+                    border-radius:0 10px 10px 0;
+                    padding:12px 14px;margin-bottom:14px;
                     border-top:1px solid rgba(251,191,36,0.2);
                     border-bottom:1px solid rgba(251,191,36,0.2);
                     border-right:1px solid rgba(251,191,36,0.2);">
-            <div style="font-weight:600;color:#fbbf24;margin-bottom:4px;font-size:13px;">
+
+            <div style="font-weight:600;color:#fbbf24;
+                        margin-bottom:4px;font-size:13px;">
                 ⭐ Special Note
             </div>
-            <div style="color:#fde68a;font-size:13px;">{breed_info["Special Note"]}</div>
-        </div>"""
+
+            <div style="color:#fde68a;font-size:13px;">
+                {breed_info["Special Note"]}
+            </div>
+
+        </div>
+        """
 
     # Top 5 Predictions
-    top5 = sorted(scores.items(), key=lambda x: x[1], reverse=True)[:5]
+    top5 = sorted(
+        scores.items(),
+        key=lambda x: x[1],
+        reverse=True
+    )[:5]
+
     html += f"""
-    <div style="background:{bg_card};border-radius:10px;padding:14px;border:1px solid {border};">
-        <div style="font-weight:600;color:{accent};margin-bottom:12px;font-size:13px;">
+    <div style="background:{bg_card};
+                border-radius:10px;padding:14px;
+                border:1px solid {border};">
+
+        <div style="font-weight:600;color:{accent};
+                    margin-bottom:12px;font-size:13px;">
             📊 Top 5 Predictions
-        </div>"""
+        </div>
+    """
 
     for breed, prob in top5:
-        pct     = round(prob * 100, 1)
-        is_top  = breed == top_breed
-        bar_clr = f"linear-gradient(90deg,{accent2},{accent})" if is_top else "#374151"
-        txt_clr = "white" if is_top else txt_sub
-        pct_clr = accent if is_top else txt_sub
-        html   += f"""
+
+        pct = round(
+            prob * 100,
+            1
+        )
+
+        is_top = breed == top_breed
+
+        bar_clr = (
+            f"linear-gradient(90deg,{accent2},{accent})"
+            if is_top
+            else "#374151"
+        )
+
+        txt_clr = (
+            "white"
+            if is_top
+            else txt_sub
+        )
+
+        pct_clr = (
+            accent
+            if is_top
+            else txt_sub
+        )
+
+        html += f"""
         <div style="margin-bottom:10px;">
-            <div style="display:flex;justify-content:space-between;
+
+            <div style="display:flex;
+                        justify-content:space-between;
                         font-size:13px;margin-bottom:4px;">
-                <span style="font-weight:{'700' if is_top else '400'};color:{txt_clr};">
-                    {em + ' ' if is_top else ''}{breed.replace('_',' ').title()}
+
+                <span style="font-weight:
+                    {'700' if is_top else '400'};
+                    color:{txt_clr};">
+
+                    {em + ' ' if is_top else ''}
+                    {breed.replace('_',' ').title()}
+
                 </span>
-                <span style="font-weight:600;color:{pct_clr};">{pct}%</span>
+
+                <span style="font-weight:600;
+                             color:{pct_clr};">
+                    {pct}%
+                </span>
+
             </div>
-            <div style="background:#1e293b;border-radius:6px;overflow:hidden;height:8px;">
-                <div style="background:{bar_clr};height:100%;width:{pct}%;
-                            border-radius:6px;"></div>
+
+            <div style="background:#1e293b;
+                        border-radius:6px;
+                        overflow:hidden;height:8px;">
+
+                <div style="background:{bar_clr};
+                            height:100%;width:{pct}%;
+                            border-radius:6px;">
+                </div>
+
             </div>
-        </div>"""
+
+        </div>
+        """
 
     html += "</div></div>"
+
     return html
+
 
 # ============================================================
 # PREDICTION FUNCTION
 # ============================================================
 def predict(animal_type, image):
-    try:
-        if image is None:
-            return "Please upload an image first.", {}, ""
 
-        img    = image.convert("RGB")
-        tensor = transform(img).unsqueeze(0).to(device)
+    try:
+
+        if image is None:
+            return (
+                "Please upload an image first.",
+                {},
+                ""
+            )
+
+        img = image.convert("RGB")
+
+        tensor = transform(
+            img
+        ).unsqueeze(0).to(device)
 
         if animal_type == "Buffalo":
-            model  = buffalo_model
+
+            model = buffalo_model
             labels = BUFFALO_CLASSES
-            data   = BUFFALO_DATA
+            data = BUFFALO_DATA
+
         elif animal_type == "Cow":
-            model  = cow_model
+
+            model = cow_model
             labels = COW_CLASSES
-            data   = COW_DATA
+            data = COW_DATA
+
         else:
-            model  = sheep_model
+
+            model = sheep_model
             labels = SHEEP_CLASSES
-            data   = SHEEP_DATA
+            data = SHEEP_DATA
 
         with torch.no_grad():
-            probs = torch.softmax(model(tensor), dim=1)[0].cpu().tolist()
 
-        scores     = {labels[i]: round(probs[i], 4) for i in range(len(labels))}
-        top_breed  = max(scores, key=scores.get)
-        conf       = round(scores[top_breed] * 100, 1)
-        breed_info = data.get(top_breed, {})
-        html       = build_html_table(top_breed, conf, animal_type, breed_info, scores)
-        result_txt = f"Predicted: {top_breed.replace('_',' ').title()}  |  Confidence: {conf}%  |  Animal: {animal_type}"
-        return result_txt, scores, html
+            probs = torch.softmax(
+                model(tensor),
+                dim=1
+            )[0].cpu().tolist()
+
+        scores = {
+            labels[i]: round(
+                probs[i],
+                4
+            )
+            for i in range(len(labels))
+        }
+
+        top_breed = max(
+            scores,
+            key=scores.get
+        )
+
+        conf = round(
+            scores[top_breed] * 100,
+            1
+        )
+
+        breed_info = data.get(
+            top_breed,
+            {}
+        )
+
+        html = build_html_table(
+            top_breed,
+            conf,
+            animal_type,
+            breed_info,
+            scores
+        )
+
+        result_txt = (
+            f"Predicted: "
+            f"{top_breed.replace('_',' ').title()} "
+            f"| Confidence: {conf}% "
+            f"| Animal: {animal_type}"
+        )
+
+        return (
+            result_txt,
+            scores,
+            html
+        )
 
     except Exception as e:
+
         err = traceback.format_exc()
+
         print(err)
-        return f"Error: {str(e)}", {}, f"<pre style='color:red'>{err}</pre>"
+
+        return (
+            f"Error: {str(e)}",
+            {},
+            f"<pre style='color:red'>{err}</pre>"
+        )
+
 
 # ============================================================
 # GRADIO UI — DARK BLUE/PURPLE THEME
 # ============================================================
 dark_css = """
-    /* ── Overall page ── */
     body, .gradio-container {
         background-color: #0f1117 !important;
         color: #e2e8f0 !important;
     }
+
     .gradio-container {
         max-width: 1100px !important;
         margin: auto !important;
     }
 
-    /* ── Panels / cards ── */
     .block, .panel, .form, .gap, .gr-box,
     .gr-padded, .gr-panel, .gr-form,
     div[data-testid="block"] {
@@ -960,32 +1424,29 @@ dark_css = """
         border-color: #2d3748 !important;
     }
 
-    /* ── Labels ── */
     label, .label-wrap span, .svelte-1gfkn6j {
         color: #94a3b8 !important;
         font-weight: 600 !important;
         font-size: 13px !important;
     }
 
-    /* ── Inputs / Textbox ── */
     input, textarea, .scroll-hide {
         background-color: #1e2235 !important;
         color: #e2e8f0 !important;
         border-color: #3b4a6b !important;
     }
 
-    /* ── Radio buttons ── */
     .wrap.svelte-12cmxck, .wrap {
         background-color: #1e2235 !important;
         border-color: #3b4a6b !important;
         color: #e2e8f0 !important;
     }
+
     input[type="radio"]:checked + span {
         color: #3b82f6 !important;
         font-weight: 700 !important;
     }
 
-    /* ── Primary Button ── */
     .primary, button.primary, .gr-button-primary {
         background: linear-gradient(135deg, #1d4ed8, #3b82f6) !important;
         border: none !important;
@@ -995,12 +1456,12 @@ dark_css = """
         border-radius: 10px !important;
         box-shadow: 0 4px 14px rgba(59,130,246,0.35) !important;
     }
+
     .primary:hover {
         background: linear-gradient(135deg, #2563eb, #60a5fa) !important;
         box-shadow: 0 6px 20px rgba(59,130,246,0.5) !important;
     }
 
-    /* ── Image upload ── */
     .upload-container, .image-container,
     div[data-testid="image"] {
         background-color: #1e2235 !important;
@@ -1008,16 +1469,15 @@ dark_css = """
         border-radius: 12px !important;
     }
 
-    /* ── Confidence Label widget ── */
     .label-container, .output-class {
         background-color: #1e2235 !important;
         color: #e2e8f0 !important;
     }
+
     .confidence-bar > div {
         background: linear-gradient(90deg, #1d4ed8, #8b5cf6) !important;
     }
 
-    /* ── Headings ── */
     h1 {
         text-align: center !important;
         font-size: 28px !important;
@@ -1026,73 +1486,150 @@ dark_css = """
         -webkit-background-clip: text !important;
         -webkit-text-fill-color: transparent !important;
     }
+
     h3 {
         text-align: center !important;
         color: #64748b !important;
         font-weight: 400 !important;
     }
 
-    /* ── Scrollbar ── */
-    ::-webkit-scrollbar { width: 6px; }
-    ::-webkit-scrollbar-track { background: #1a1d2e; }
-    ::-webkit-scrollbar-thumb { background: #3b4a6b; border-radius: 3px; }
+    ::-webkit-scrollbar {
+        width: 6px;
+    }
 
-    footer, .built-with { display: none !important; }
+    ::-webkit-scrollbar-track {
+        background: #1a1d2e;
+    }
+
+    ::-webkit-scrollbar-thumb {
+        background: #3b4a6b;
+        border-radius: 3px;
+    }
+
+    footer, .built-with {
+        display: none !important;
+    }
 """
 
-# NOTE: theme/css removed from Blocks() — they now go in demo.launch() below (Gradio 6.0)
+
+# ============================================================
+# GRADIO APP
+# ============================================================
 with gr.Blocks(
     title="AI Based Livestock Breed Recognition"
 ) as demo:
 
-    gr.Markdown("# 🐾 AI Based Breed Recognition System")
-    gr.Markdown("### Identify Indian Buffalo · Cow · Sheep breeds using Deep Learning")
+    gr.Markdown(
+        "# 🐾 AI Based Breed Recognition System"
+    )
+
+    gr.Markdown(
+        "### Identify Indian Buffalo · Cow · Sheep breeds using Deep Learning"
+    )
+
     gr.Markdown("""
-    <div style="text-align:center;background:rgba(59,130,246,0.1);border:1px solid rgba(59,130,246,0.3);
-                padding:8px 14px;border-radius:8px;font-size:13px;color:#93c5fd;margin-bottom:4px;">
-        🐃 Buffalo: <strong style="color:#60a5fa;">Available</strong> (17 breeds) &nbsp;|&nbsp;
-        🐄 Cow: <strong style="color:#a78bfa;">Available</strong> (11 breeds) &nbsp;|&nbsp;
-        🐑 Sheep: <strong style="color:#818cf8;">Available</strong> (7 breeds)
+    <div style="text-align:center;
+                background:rgba(59,130,246,0.1);
+                border:1px solid rgba(59,130,246,0.3);
+                padding:8px 14px;border-radius:8px;
+                font-size:13px;color:#93c5fd;
+                margin-bottom:4px;">
+
+        🐃 Buffalo:
+        <strong style="color:#60a5fa;">
+            Available
+        </strong>
+        (17 breeds)
+
+        &nbsp;|&nbsp;
+
+        🐄 Cow:
+        <strong style="color:#a78bfa;">
+            Available
+        </strong>
+        (11 breeds)
+
+        &nbsp;|&nbsp;
+
+        🐑 Sheep:
+        <strong style="color:#818cf8;">
+            Available
+        </strong>
+        (7 breeds)
+
     </div>
     """)
 
     with gr.Row():
+
         with gr.Column(scale=1):
+
             animal_type = gr.Radio(
-                choices=["Buffalo", "Cow", "Sheep"],
+                choices=[
+                    "Buffalo",
+                    "Cow",
+                    "Sheep"
+                ],
                 value="Buffalo",
                 label="🐾 Select Animal Type",
             )
+
             image_input = gr.Image(
                 label="📷 Upload Animal Image",
                 type="pil",
                 sources=["upload"],
                 height=300,
             )
-            predict_btn = gr.Button("🔍 Identify Breed", variant="primary", size="lg")
+
+            predict_btn = gr.Button(
+                "🔍 Identify Breed",
+                variant="primary",
+                size="lg"
+            )
 
         with gr.Column(scale=2):
+
             prediction_text = gr.Textbox(
                 label="🎯 Prediction Result",
                 interactive=False
             )
+
             confidence_bar = gr.Label(
                 label="📊 Confidence Scores",
                 num_top_classes=5
             )
-            breed_details = gr.HTML(label="📋 Breed Details")
+
+            breed_details = gr.HTML(
+                label="📋 Breed Details"
+            )
 
     predict_btn.click(
         fn=predict,
-        inputs=[animal_type, image_input],
-        outputs=[prediction_text, confidence_bar, breed_details]
+        inputs=[
+            animal_type,
+            image_input
+        ],
+        outputs=[
+            prediction_text,
+            confidence_bar,
+            breed_details
+        ]
     )
 
+
+# ============================================================
+# LAUNCH FOR RENDER
+# ============================================================
 print("✅ Launching Gradio App...")
-# NOTE: show_api removed (no longer a valid launch() argument in Gradio 6.0)
-# theme/css moved here from Blocks()
+
 demo.launch(
-    share=True,
+    server_name="0.0.0.0",
+    server_port=int(
+        os.environ.get(
+            "PORT",
+            7860
+        )
+    ),
     debug=False,
     theme=gr.themes.Base(),
     css=dark_css
