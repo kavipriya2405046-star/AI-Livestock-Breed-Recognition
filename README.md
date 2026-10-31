@@ -233,7 +233,7 @@ This project is developed as a team-based academic project.
 ### Contributors
 
 * Kavipriya T.
-* Add your other team members here
+* Abinaya K.
 
 ## 📜 License
 
